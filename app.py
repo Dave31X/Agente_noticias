@@ -1,4 +1,4 @@
-# app.py / 5_app.py
+# app.py
 # Interfaz profesional para NewsAgent Intelligence Platform
 
 import streamlit as st
@@ -783,7 +783,7 @@ with st.sidebar:
                 {estado_sistema}
             </div>
             <div class="sidebar-note" style="margin-top:0.75rem;">
-                Motor RAG listo para convertir noticias sueltas en respuestas con traje y corbata.
+                Motor RAG listo para explicar politica colombiana actual con neutralidad y contexto.
             </div>
         </div>
         """,
@@ -865,12 +865,12 @@ with st.sidebar:
         <div class="side-section">
             <div class="side-title">Recargar munición informativa</div>
             <div class="sidebar-note">
-                Cuando el radar se quede con noticias viejas, corre estos comandos y vuelve a tener la base al día.
+                Cuando el radar electoral se quede con noticias viejas, corre estos comandos y vuelve a tener la base al día.
             </div>
             <div class="command-box">
-                python 1_obtener_noticias.py<br>
-                python 2_crear_vectorstore.py<br>
-                streamlit run 5_app.py
+                python3 obtener_noticias.py<br>
+                python3 crear_vectorstore.py<br>
+                streamlit run app.py
             </div>
         </div>
         """,
@@ -887,18 +887,18 @@ st.markdown(
     f"""
     <div class="hero-card">
         <div class="hero-content">
-            <div class="eyebrow">🧠 Radar ejecutivo encendido · {fecha_actual}</div>
-            <div class="hero-title">Noticias en desorden, análisis con corbata.</div>
+            <div class="eyebrow">🧠 Radar electoral encendido · {fecha_actual}</div>
+            <div class="hero-title">Política colombiana explicada sin ruido.</div>
             <div class="hero-subtitle">
-                Esta plataforma toma el ruido informativo, lo organiza y lo convierte en respuestas claras,
-                útiles y presentables para análisis, comités o decisiones rápidas.
+                Esta plataforma sigue elecciones presidenciales, candidatos, encuestas, partidos e instituciones,
+                y lo convierte en respuestas neutrales, claras y faciles de entender.
             </div>
-            <div class="executive-ribbon">✨ Menos caos noticioso · más criterio ejecutivo</div>
+            <div class="executive-ribbon">✨ Hechos separados de opiniones · contexto para todos</div>
             <div class="hero-actions">
                 <div class="hero-chip">RAG + Vector DB</div>
-                <div class="hero-chip">Colombia y mundo bajo la lupa</div>
-                <div class="hero-chip">Briefings ejecutivos</div>
-                <div class="hero-chip">{stats['total']:,} noticias listas para chismosear con método</div>
+                <div class="hero-chip">Colombia politica bajo la lupa</div>
+                <div class="hero-chip">Elecciones presidenciales 2026</div>
+                <div class="hero-chip">{stats['total']:,} noticias listas para analizar con metodo</div>
             </div>
         </div>
     </div>
@@ -977,12 +977,12 @@ with left_panel:
     )
 
     preguntas = [
-        "¿Qué está pasando en economía y qué debería importarle a alguien que toma decisiones?",
-        "Sepárame los hechos políticos del ruido: ¿qué es dato y qué es interpretación?",
-        "¿Dónde están los riesgos escondidos y las oportunidades disfrazadas?",
-        "Hazme un resumen ejecutivo para junta: claro, corto y sin carreta.",
-        "¿Qué temas se repiten tanto que ya parecen canción de radio?",
-        "Compara tecnología, economía y política según impacto potencial y urgencia.",
+        "¿Qué está pasando con las elecciones presidenciales en Colombia?",
+        "Explícame los principales candidatos o precandidatos sin sesgos.",
+        "¿Qué dicen las encuestas y qué límites tienen?",
+        "Sepárame hechos, opiniones e interpretaciones del debate político actual.",
+        "¿Qué riesgos electorales se están mencionando?",
+        "Hazme un resumen sencillo para alguien que no sigue política todos los días.",
     ]
 
     qcols = st.columns(2)
@@ -1003,22 +1003,22 @@ with right_panel:
             <div class="insight-row">
                 <div class="insight-icon">1</div>
                 <div>
-                    <div class="insight-title">Pide versión de comité</div>
-                    <div class="insight-text">Ejemplo: “resume en 5 bullets, con riesgos e implicaciones”.</div>
+                    <div class="insight-title">Pide explicacion sencilla</div>
+                    <div class="insight-text">Ejemplo: “explicalo para alguien que no sigue politica todos los dias”.</div>
                 </div>
             </div>
             <div class="insight-row">
                 <div class="insight-icon">2</div>
                 <div>
-                    <div class="insight-title">Hazla comparar, no solo contar</div>
-                    <div class="insight-text">Contrasta fuentes, temas, riesgos, oportunidades o impactos.</div>
+                    <div class="insight-title">Pide separar hechos y opiniones</div>
+                    <div class="insight-text">Sirve para no confundir datos confirmados con lecturas de medios o campañas.</div>
                 </div>
             </div>
             <div class="insight-row">
                 <div class="insight-icon">3</div>
                 <div>
-                    <div class="insight-title">Dile cómo quieres el plato servido</div>
-                    <div class="insight-text">Pide tabla, briefing, PESTEL, matriz de riesgos o resumen ejecutivo.</div>
+                    <div class="insight-title">Pregunta por contexto</div>
+                    <div class="insight-text">Pide antecedentes, actores involucrados, posibles efectos y temas pendientes.</div>
                 </div>
             </div>
         </div>
@@ -1036,7 +1036,7 @@ st.markdown(
         <div class="chat-header">
             <div>
                 <div class="chat-title">Analista de bolsillo</div>
-                <div class="chat-subtitle">Pregunta sobre noticias, tendencias, riesgos u oportunidades. Promete no hablar en comité si no se lo pides.</div>
+                <div class="chat-subtitle">Pregunta sobre elecciones, candidatos, encuestas, partidos, gobierno y oposicion.</div>
             </div>
             <div class="chat-badge">● Disponible</div>
         </div>
@@ -1051,8 +1051,8 @@ if not st.session_state.mensajes:
             <div class="empty-icon">💬</div>
             <div class="empty-title">Abre el radar y pregunta sin miedo</div>
             <div class="empty-text">
-                El agente responde con base en las noticias indexadas. Para mejores resultados, pide análisis con estructura:
-                resumen ejecutivo, riesgos, oportunidades, implicaciones o recomendaciones.
+                El agente responde con base en las noticias indexadas. Para mejores resultados, pide una explicacion sencilla,
+                neutral y separada entre hechos, opiniones e implicaciones.
             </div>
         </div>
         """,

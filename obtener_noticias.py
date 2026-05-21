@@ -9,127 +9,99 @@ from datetime import datetime, timedelta
 load_dotenv()
 API_KEY = os.getenv("NEWS_API_KEY")
 
-# ── TEMAS: Finanzas, Economía, Gobierno y Política ─────────────
-TEMAS = [
+# ── ENFOQUE: Política actual de Colombia y presidenciales 2026 ─
+CATEGORIAS_TEMAS = {
+    "Elecciones presidenciales Colombia 2026": [
+        "elecciones presidenciales Colombia 2026",
+        "campaña presidencial Colombia 2026",
+        "precandidatos presidenciales Colombia 2026",
+        "candidatos presidenciales Colombia",
+        "presidenciales Colombia 2026",
+        "primera vuelta presidencial Colombia 2026",
+        "segunda vuelta presidencial Colombia 2026",
+        "elecciones 2026 Colombia presidente",
+    ],
+    "Candidatos y propuestas": [
+        "propuestas candidatos presidenciales Colombia",
+        "programa de gobierno candidatos Colombia 2026",
+        "debate candidatos presidenciales Colombia",
+        "aspirantes presidenciales Colombia",
+        "candidaturas Colombia 2026",
+        "hojas de vida candidatos presidenciales Colombia",
+        "alianzas candidatos presidenciales Colombia",
+    ],
+    "Encuestas y opinion publica": [
+        "encuesta presidencial Colombia 2026",
+        "intencion de voto Colombia presidenciales",
+        "favorabilidad candidatos Colombia",
+        "opinion publica Colombia elecciones",
+        "sondeo presidencial Colombia",
+        "tracking electoral Colombia",
+        "imagen candidatos presidenciales Colombia",
+    ],
+    "Partidos, coaliciones y Congreso": [
+        "partidos politicos Colombia elecciones 2026",
+        "coaliciones politicas Colombia 2026",
+        "Pacto Historico elecciones 2026 Colombia",
+        "Centro Democratico elecciones 2026 Colombia",
+        "Partido Liberal elecciones 2026 Colombia",
+        "Partido Conservador elecciones 2026 Colombia",
+        "Alianza Verde elecciones 2026 Colombia",
+        "Congreso Colombia elecciones presidenciales",
+        "oposicion Colombia elecciones 2026",
+    ],
+    "Instituciones y reglas electorales": [
+        "Registraduria elecciones Colombia 2026",
+        "Consejo Nacional Electoral Colombia elecciones",
+        "CNE Colombia candidatos presidenciales",
+        "financiacion campañas Colombia",
+        "calendario electoral Colombia 2026",
+        "inscripcion candidatos presidenciales Colombia",
+        "reforma politica Colombia elecciones",
+        "garantias electorales Colombia",
+    ],
+    "Gobierno y contexto politico": [
+        "Gobierno Petro elecciones 2026",
+        "Gustavo Petro politica Colombia actualidad",
+        "reformas gobierno Petro elecciones",
+        "crisis politica Colombia gobierno",
+        "gabinete Colombia Petro politica",
+        "relacion gobierno Congreso Colombia",
+        "oposicion gobierno Petro Colombia",
+        "debate politico Colombia actualidad",
+        "Corte Constitucional Colombia politica",
+        "Fiscalia Colombia politica",
+        "Procuraduria Colombia politica",
+    ],
+    "Seguridad y riesgos electorales": [
+        "seguridad electoral Colombia 2026",
+        "violencia politica Colombia elecciones",
+        "riesgo electoral Colombia",
+        "MOE Colombia elecciones 2026",
+        "orden publico elecciones Colombia",
+        "desinformacion elecciones Colombia",
+        "delitos electorales Colombia",
+        "compra de votos Colombia elecciones",
+    ],
+}
 
-    # ── ECONOMÍA COLOMBIA ──────────────────────────────────────
-    "economía Colombia 2025",
-    "inflación Colombia",
-    "dólar peso colombiano",
-    "PIB Colombia crecimiento",
-    "desempleo Colombia",
-    "pobreza Colombia índice",
-    "exportaciones importaciones Colombia",
-    "petróleo Colombia barril",
-    "minería Colombia producción",
-    "café Colombia precios",
-    "deuda pública Colombia",
-    "déficit fiscal Colombia",
-    "inversión extranjera Colombia",
-    "comercio exterior Colombia",
+TEMAS = [tema for temas in CATEGORIAS_TEMAS.values() for tema in temas]
 
-    # ── FINANZAS COLOMBIA ──────────────────────────────────────
-    "Banco de la República Colombia",
-    "tasas de interés Colombia",
-    "bolsa valores Colombia BVC",
-    "bancos Colombia sector financiero",
-    "crédito hipotecario Colombia",
-    "reforma pensional Colombia",
-    "reforma tributaria Colombia",
-    "presupuesto nacional Colombia",
-    "Hacienda Colombia ministerio",
-    "finanzas públicas Colombia",
-    "criptomonedas Colombia regulación",
-    "seguros Colombia mercado",
-    "Fondo Monetario Colombia",
-
-    # ── GOBIERNO COLOMBIA ──────────────────────────────────────
-    "Gustavo Petro gobierno",
-    "Petro presidente Colombia",
-    "gobierno Colombia 2025 decisiones",
-    "ministerio Colombia decreto",
-    "Casa de Nariño Colombia",
-    "vicepresidente Colombia Francia Márquez",
-    "gabinete Colombia ministros",
-    "decreto ley Colombia",
-    "política pública Colombia",
-    "gasto público Colombia gobierno",
-    "contratos estado Colombia",
-    "corrupción Colombia gobierno",
-    "Plan Nacional Desarrollo Colombia",
-    "Colombia reformas gobierno Petro",
-
-    # ── POLÍTICA COLOMBIA ──────────────────────────────────────
-    "congreso Colombia senado cámara",
-    "elecciones Colombia 2026",
-    "partidos políticos Colombia",
-    "oposición Colombia congreso",
-    "reforma Colombia debate",
-    "Gustavo Petro reforma laboral",
-    "reforma salud Colombia",
-    "reforma educación Colombia",
-    "politica colombiana debate",
-    "alcalde Bogotá Carlos Fernando Galán",
-    "gobernadores Colombia",
-    "plebiscito referendo Colombia",
-    "Corte Constitucional Colombia",
-    "Procuraduría Colombia",
-    "Fiscalía Colombia",
-
-    # ── ECONOMÍA LATINOAMÉRICA ─────────────────────────────────
-    "economía América Latina 2025",
-    "Venezuela economía crisis",
-    "Ecuador economía gobierno",
-    "Argentina economía Milei",
-    "Chile economía gobierno",
-    "Brasil economía Lula",
-    "México economía gobierno",
-    "Perú economía política",
-    "LATAM mercados emergentes",
-    "dólar América Latina",
-
-    # ── FINANZAS GLOBALES ──────────────────────────────────────
-    "Reserva Federal tasas interés",
-    "Banco Central Europeo política monetaria",
-    "inflación mundial 2025",
-    "recesión economía global",
-    "mercados financieros globales",
-    "petróleo precio barril mundial",
-    "oro precio mercados",
-    "criptomonedas Bitcoin mercado",
-    "Wall Street mercados",
-    "economía China crecimiento",
-    "guerra comercial aranceles",
-    "FMI Banco Mundial economía",
-    "deuda global países",
-    "tipo de cambio divisas",
-
-    # ── POLÍTICA INTERNACIONAL ─────────────────────────────────
-    "Colombia Estados Unidos relaciones",
-    "Colombia Venezuela relaciones",
-    "Colombia OEA Naciones Unidas",
-    "geopolítica América Latina",
-    "Trump política exterior",
-    "Unión Europea política",
-    "China política gobierno",
-    "Rusia Ucrania guerra economía",
-    "OTAN geopolítica",
-    "elecciones mundo 2025",
-]
-
-PAGINAS_POR_TEMA = 2  # 2 páginas × 100 artículos = hasta 200 por tema
+DIAS_BUSQUEDA = 30
+PAGINAS_POR_TEMA = 2  # 2 paginas x 100 articulos = hasta 200 por tema
 
 def obtener_articulos_pagina(tema, pagina=1, cantidad=100):
     """Descarga una página de artículos de NewsAPI"""
-    fecha_inicio = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d")
+    fecha_inicio = (datetime.now() - timedelta(days=DIAS_BUSQUEDA)).strftime("%Y-%m-%d")
     url = "https://newsapi.org/v2/everything"
     params = {
         "q": tema,
         "language": "es",
         "from": fecha_inicio,
-        "sortBy": "relevancy",
+        "sortBy": "publishedAt",
         "pageSize": cantidad,
         "page": pagina,
+        "searchIn": "title,description,content",
         "apiKey": API_KEY
     }
     try:
@@ -185,28 +157,29 @@ def obtener_contenido_completo(noticia):
 
 def es_relevante(noticia):
     """
-    Filtra noticias que realmente sean sobre economía,
-    finanzas, gobierno o política.
+    Filtra noticias que realmente sean sobre politica colombiana,
+    elecciones presidenciales y contexto electoral.
     """
     palabras_clave = [
-        # Economía
-        "economía", "económico", "pib", "inflación", "deflación",
-        "desempleo", "empleo", "exportación", "importación", "comercio",
-        "petróleo", "minería", "producción", "mercado", "precio",
-        "crecimiento", "recesión", "inversión", "deuda", "déficit",
-        # Finanzas
-        "banco", "tasa", "interés", "bolsa", "acciones", "dólar",
-        "peso", "moneda", "crédito", "préstamo", "pensión", "tributario",
-        "impuesto", "presupuesto", "hacienda", "financiero", "fiscal",
-        "bitcoin", "criptomoneda", "fondo", "divisa", "cambio",
-        # Gobierno
-        "gobierno", "ministro", "presidente", "decreto", "ley",
-        "reforma", "política pública", "congreso", "senado", "cámara",
-        "gobernador", "alcalde", "estado", "nación", "república",
-        # Política
-        "partido", "elección", "candidato", "campaña", "voto",
-        "petro", "oposición", "coalición", "debate", "propuesta",
-        "corte", "tribunal", "ley", "constitución", "regulación",
+        # Elecciones presidenciales
+        "elección", "elecciones", "electoral", "presidencial",
+        "presidenciales", "presidente", "candidato", "candidata",
+        "candidatos", "precandidato", "precandidata", "campaña",
+        "voto", "votación", "segunda vuelta", "primera vuelta",
+        "encuesta", "sondeo", "intención de voto", "favorabilidad",
+        # Partidos, coaliciones e instituciones
+        "partido", "coalición", "alianza", "oposición", "congreso",
+        "senado", "cámara", "registraduría", "registraduria",
+        "consejo nacional electoral", "cne", "moe", "financiación",
+        "financiacion", "garantías electorales", "garantias electorales",
+        # Contexto politico nacional
+        "gobierno", "petro", "ministro", "ministra", "reforma",
+        "política", "politica", "debate", "propuesta", "programa",
+        "corte constitucional", "fiscalía", "fiscalia", "procuraduría",
+        "procuraduria", "corrupción", "corrupcion", "investigación",
+        "investigacion", "desinformación", "desinformacion",
+        # Ubicacion
+        "colombia", "colombiano", "colombiana", "bogotá", "bogota",
     ]
     texto = (
         (noticia.get("titulo") or "") + " " +
@@ -222,17 +195,7 @@ def descargar_todas():
     solicitudes = 0
     MAX_SOLICITUDES_POR_HORA = 90  # NewsAPI límite gratuito
 
-    categorias = {
-        "Economía Colombia": TEMAS[:14],
-        "Finanzas Colombia": TEMAS[14:27],
-        "Gobierno Colombia": TEMAS[27:41],
-        "Política Colombia": TEMAS[41:56],
-        "Economía LATAM": TEMAS[56:65],
-        "Finanzas Globales": TEMAS[65:79],
-        "Política Internacional": TEMAS[79:],
-    }
-
-    for categoria, temas in categorias.items():
+    for categoria, temas in CATEGORIAS_TEMAS.items():
         print(f"\n{'='*55}")
         print(f"📂 {categoria} ({len(temas)} temas)")
         print(f"{'='*55}")
@@ -319,8 +282,9 @@ def guardar(noticias):
     print(f"\n💾 Tamaño del corpus: {tam:.1f} MB")
 
 if __name__ == "__main__":
-    print("🚀 Descarga focalizada: Economía · Finanzas · Gobierno · Política")
+    print("🚀 Descarga focalizada: Política Colombia · Presidenciales 2026")
     print(f"📋 Total de temas: {len(TEMAS)}")
+    print(f"🗓️  Ventana de búsqueda: últimos {DIAS_BUSQUEDA} días")
     print(f"📄 Páginas por tema: {PAGINAS_POR_TEMA} (hasta {PAGINAS_POR_TEMA * 100} art/tema)\n")
     inicio = time.time()
     noticias = descargar_todas()

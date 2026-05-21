@@ -23,10 +23,11 @@ vectorstore = Chroma(
 @tool
 def buscar_noticias(consulta: str) -> str:
     """
-    Busca noticias relevantes en la base de datos sobre cualquier tema.
-    Úsala cuando el usuario pregunte sobre noticias, eventos o temas de actualidad.
+    Busca noticias relevantes en la base de datos sobre politica colombiana,
+    elecciones presidenciales, candidatos, encuestas y contexto electoral.
+    Usala cuando el usuario pregunte sobre noticias, eventos o temas de actualidad.
     """
-    resultados = vectorstore.similarity_search(consulta, k=4)
+    resultados = vectorstore.similarity_search(consulta, k=6)
     
     if not resultados:
         return "No encontré noticias relevantes sobre ese tema."
@@ -49,8 +50,11 @@ def clasificar_tema(consulta: str) -> str:
     
     # Cambia esta sección en clasificar_tema
     categorias = {
-    "Política": ["presidente", "gobierno", "congreso", "elección",
-                 "senado", "ministro", "partido", "votación"],
+    "Elecciones presidenciales": ["presidencial", "presidenciales", "candidato",
+                                  "candidata", "campaña", "voto", "encuesta"],
+    "Política Colombia": ["presidente", "gobierno", "congreso", "elección",
+                          "senado", "ministro", "partido", "votación",
+                          "petro", "oposición", "coalición"],
     "Economía": ["inflación", "dólar", "economía", "pib", "desempleo",
                  "banco", "finanzas", "mercado", "precio"],
     "Tecnología": ["inteligencia artificial", "tecnología",
@@ -78,7 +82,7 @@ def obtener_contexto_temporal(input: str = "") -> str:
     return (
         f"Fecha actual: {ahora.strftime('%A %d de %B de %Y')}\n"
         f"Hora: {ahora.strftime('%H:%M')}\n"
-        f"Las noticias disponibles son de los últimos 7 días."
+        f"El enfoque configurado busca noticias de los últimos 30 días."
     )
 
 # ── TOOL 4: Contar y resumir noticias disponibles ─────────────
