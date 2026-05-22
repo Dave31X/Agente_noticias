@@ -10,6 +10,7 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: [".trycloudflare.com", ".loca.lt", "localhost", "127.0.0.1"],
     proxy: {
       "/api": "http://127.0.0.1:8765",
     },
