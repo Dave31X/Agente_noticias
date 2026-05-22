@@ -1,113 +1,407 @@
-# 3_tools.py
-# Define todas las herramientas que el agente puede usar
+# tools.py
+# Herramientas del agente: retrieval, cobertura, clasificacion y contexto temporal.
 
-from langchain.tools import tool
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from datetime import datetime
 import json
 import os
+from collections import Counter
+from datetime import datetime
+from urllib.parse import urlparse
 
-# Cargar el vector store que ya creamos
+from langchain.tools import tool
 from langchain_community.embeddings import HuggingFaceEmbeddings
-embeddings = HuggingFaceEmbeddings(
-    model_name="all-MiniLM-L6-v2"
+from langchain_community.vectorstores import Chroma
+
+from config import (
+    CORPUS_METADATA,
+    DIAS_BUSQUEDA,
+    ENFOQUE_AGENTE,
+    NEWS_JSON,
+    PALABRAS_COLOMBIA,
+    PALABRAS_POLITICA_ELECTORAL,
+    VECTORSTORE_DIR,
 )
 
-vectorstore = Chroma(
-    persist_directory="./datos/noticias_db",
-    embedding_function=embeddings
-)
+_embeddings = None
+_vectorstore = None
+DOMINIOS_WEB_PRIORITARIOS = [
+    "eltiempo.com",
+    "elespectador.com",
+    "semana.com",
+    "caracol.com.co",
+    "lafm.com.co",
+    "bluradio.com",
+    "infobae.com",
+    "cambio.com.co",
+    "elpais.com.co",
+    "registraduria.gov.co",
+    "cne.gov.co",
+]
+PALABRAS_ENFOQUE_WEB = [
+    "elecciones",
+    "presidencial",
+    "presidenciales",
+    "candidato",
+    "candidatos",
+    "encuesta",
+    "encuestas",
+    "voto",
+    "politica",
+    "política",
+    "gobierno",
+    "congreso",
+    "petro",
+    "registraduria",
+    "registraduría",
+    "cne",
+]
 
-# ── TOOL 1: Buscar noticias (RAG) ─────────────────────────────
+
+def _get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    return _embeddings
+
+
+def _get_vectorstore():
+    global _vectorstore
+    if _vectorstore is None:
+        if not VECTORSTORE_DIR.exists():
+            raise FileNotFoundError(
+                "No existe datos/noticias_db. Ejecuta python3 crear_vectorstore.py despues de obtener noticias."
+            )
+        _vectorstore = Chroma(
+            persist_directory=str(VECTORSTORE_DIR),
+            embedding_function=_get_embeddings(),
+        )
+    return _vectorstore
+
+
+def _cargar_noticias():
+    if not NEWS_JSON.exists():
+        return []
+    with open(NEWS_JSON, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data if isinstance(data, list) else []
+
+
+def _recortar(texto, limite=360):
+    texto = " ".join((texto or "").split())
+    return texto[:limite].rstrip() + ("..." if len(texto) > limite else "")
+
+
+def _dominio(url):
+    try:
+        return urlparse(url).netloc.replace("www.", "")
+    except Exception:
+        return "Sin fuente"
+
+
+def _score_enfoque(noticia):
+    texto = " ".join(
+        [
+            noticia.get("titulo", ""),
+            noticia.get("descripcion", ""),
+            noticia.get("contenido", ""),
+            noticia.get("tema", ""),
+            noticia.get("categoria", ""),
+        ]
+    ).lower()
+    colombia = sum(1 for p in PALABRAS_COLOMBIA if p in texto)
+    politica = sum(1 for p in PALABRAS_POLITICA_ELECTORAL if p in texto)
+    if colombia == 0 or politica == 0:
+        return 0
+    return colombia * 2 + politica
+
+
 @tool
 def buscar_noticias(consulta: str) -> str:
     """
-    Busca noticias relevantes en la base de datos sobre politica colombiana,
-    elecciones presidenciales, candidatos, encuestas y contexto electoral.
-    Usala cuando el usuario pregunte sobre noticias, eventos o temas de actualidad.
+    Busca noticias relevantes en ChromaDB sobre politica colombiana, elecciones 2026,
+    candidatos, encuestas, partidos, instituciones y riesgos electorales.
+    Usala antes de responder preguntas factuales o de actualidad.
     """
-    resultados = vectorstore.similarity_search(consulta, k=6)
-    
-    if not resultados:
-        return "No encontré noticias relevantes sobre ese tema."
-    
-    respuesta = f"Encontré {len(resultados)} noticias relevantes:\n\n"
-    for i, doc in enumerate(resultados, 1):
-        respuesta += f"--- Noticia {i} ---\n"
-        respuesta += f"{doc.page_content[:400]}\n\n"
-    
-    return respuesta
+    try:
+        vectorstore = _get_vectorstore()
+        resultados = vectorstore.similarity_search_with_score(consulta, k=4)
+    except Exception as error:
+        return f"No pude consultar la base vectorial: {error}"
 
-# ── TOOL 2: Clasificar el tema de una consulta ────────────────
+    if not resultados:
+        return "No encontre noticias relevantes sobre ese tema en la base local."
+
+    respuesta = [f"Consulta: {consulta}", f"Resultados recuperados: {len(resultados)}"]
+    for i, (doc, score) in enumerate(resultados, 1):
+        meta = doc.metadata or {}
+        respuesta.extend(
+            [
+                f"\n--- Resultado {i} ---",
+                f"Titulo: {meta.get('titulo', 'Sin titulo')}",
+                f"Fuente: {meta.get('fuente', 'Sin fuente')}",
+                f"Fecha: {meta.get('fecha', 'Sin fecha')}",
+                f"Categoria: {meta.get('categoria', 'Sin categoria')}",
+                f"Tema: {meta.get('tema', 'Sin tema')}",
+                f"URL: {meta.get('url', 'Sin URL')}",
+                f"Distancia semantica: {score:.4f}",
+                f"Fragmento: {_recortar(doc.page_content)}",
+            ]
+        )
+    return "\n".join(respuesta)
+
+
+@tool
+def buscar_web_noticias(consulta: str) -> str:
+    """
+    Investiga noticias recientes en la web usando Tavily Search.
+    Usala cuando el corpus local no tenga evidencia suficiente, este desactualizado
+    o el usuario pida informacion muy reciente. No reemplaza el retrieval local:
+    complementa la respuesta y debe citar titulo, fuente, fecha y URL.
+    """
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return (
+            "La busqueda web con Tavily no esta configurada. "
+            "Agrega TAVILY_API_KEY en tu archivo .env y reinstala dependencias si hace falta: "
+            "pip install tavily-python"
+        )
+
+    query = consulta.strip()
+    if "colombia" not in query.lower():
+        query = f"{query} Colombia"
+    if not any(palabra in query.lower() for palabra in PALABRAS_ENFOQUE_WEB):
+        query = f"{query} politica actualidad"
+
+    try:
+        from tavily import TavilyClient
+
+        cliente = TavilyClient(api_key=api_key)
+        parametros = {
+            "query": query,
+            "search_depth": "basic",
+            "topic": "general",
+            "country": "colombia",
+            "days": DIAS_BUSQUEDA,
+            "max_results": 5,
+            "include_answer": False,
+            "include_raw_content": False,
+            "include_usage": True,
+        }
+        if any(palabra in query.lower() for palabra in PALABRAS_ENFOQUE_WEB):
+            parametros["include_domains"] = DOMINIOS_WEB_PRIORITARIOS
+
+        respuesta = cliente.search(
+            **parametros
+        )
+    except Exception as error:
+        return f"No pude investigar en la web con Tavily en este momento: {error}"
+
+    resultados = []
+    for item in respuesta.get("results", []):
+        titulo = (item.get("title") or "").strip()
+        enlace = (item.get("url") or "").strip()
+        contenido = (item.get("content") or "").strip()
+        fecha = item.get("published_date") or item.get("publishedDate") or ""
+        score = item.get("score")
+
+        if not titulo and not enlace:
+            continue
+
+        resultados.append(
+            {
+                "titulo": titulo or "Sin titulo",
+                "fuente": _dominio(enlace),
+                "fecha": fecha,
+                "url": enlace,
+                "contenido": contenido,
+                "score": score,
+            }
+        )
+
+    if not resultados:
+        return "Tavily no encontro resultados web recientes para esa consulta."
+
+    lineas = [
+        f"Consulta web: {query}",
+        "Proveedor de busqueda web: Tavily Search",
+            f"Resultados web recuperados: {len(resultados[:5])}",
+        f"Ventana web solicitada: ultimos {DIAS_BUSQUEDA} dias",
+    ]
+    if respuesta.get("usage"):
+        lineas.append(f"Uso Tavily reportado: {respuesta.get('usage')}")
+    for indice, resultado in enumerate(resultados[:5], 1):
+        score = resultado["score"]
+        score_texto = f"{score:.4f}" if isinstance(score, (float, int)) else "Sin score"
+        lineas.extend(
+            [
+                f"\n--- Resultado web {indice} ---",
+                f"Titulo: {resultado['titulo']}",
+                f"Fuente: {resultado['fuente']}",
+                f"Fecha: {resultado['fecha'] or 'Sin fecha'}",
+                f"URL: {resultado['url']}",
+                f"Score Tavily: {score_texto}",
+                f"Resumen: {_recortar(resultado['contenido'], 320)}",
+            ]
+        )
+
+    return "\n".join(lineas)
+
+
 @tool
 def clasificar_tema(consulta: str) -> str:
     """
-    Clasifica a qué categoría pertenece una consulta o noticia.
-    Útil para entender de qué área trata la pregunta del usuario.
+    Clasifica la consulta segun el enfoque del agente y detecta si esta fuera de alcance.
     """
     consulta_lower = consulta.lower()
-    
-    # Cambia esta sección en clasificar_tema
     categorias = {
-    "Elecciones presidenciales": ["presidencial", "presidenciales", "candidato",
-                                  "candidata", "campaña", "voto", "encuesta"],
-    "Política Colombia": ["presidente", "gobierno", "congreso", "elección",
-                          "senado", "ministro", "partido", "votación",
-                          "petro", "oposición", "coalición"],
-    "Economía": ["inflación", "dólar", "economía", "pib", "desempleo",
-                 "banco", "finanzas", "mercado", "precio"],
-    "Tecnología": ["inteligencia artificial", "tecnología",
-                   "software", "startup", "digital", "meta", "google", "apple"],
-    "Deportes": ["fútbol", "mundial", "liga", "equipo", "jugador",
-                 "gol", "selección", "hincha"],
-    "Salud": ["salud", "hospital", "enfermedad", "vacuna",
-              "médico", "pandemia", "virus"]
+        "Elecciones presidenciales": [
+            "presidencial",
+            "presidenciales",
+            "candidato",
+            "candidata",
+            "campaña",
+            "voto",
+            "encuesta",
+        ],
+        "Gobierno y contexto politico": [
+            "presidente",
+            "gobierno",
+            "petro",
+            "ministro",
+            "reforma",
+            "oposicion",
+            "oposición",
+        ],
+        "Partidos, coaliciones y Congreso": [
+            "congreso",
+            "senado",
+            "partido",
+            "coalicion",
+            "coalición",
+            "alianza",
+        ],
+        "Instituciones y reglas electorales": [
+            "registraduria",
+            "registraduría",
+            "cne",
+            "calendario electoral",
+            "garantias",
+            "garantías",
+        ],
+        "Seguridad y riesgos electorales": [
+            "seguridad",
+            "riesgo",
+            "moe",
+            "violencia",
+            "desinformacion",
+            "desinformación",
+            "delitos electorales",
+        ],
     }
-    
+
     for categoria, palabras_clave in categorias.items():
         if any(palabra in consulta_lower for palabra in palabras_clave):
-            return f"Categoría identificada: {categoria}"
-    
-    return "Categoría: General / Actualidad"
+            return f"Categoria identificada: {categoria}. Esta dentro del enfoque del agente."
 
-# ── TOOL 3: Obtener fecha y contexto temporal ─────────────────
+    if any(p in consulta_lower for p in ["colombia", "petro", "bogota", "bogotá"]):
+        return "Categoria identificada: Politica Colombia. Esta parcialmente dentro del enfoque."
+
+    return (
+        "Consulta posiblemente fuera de alcance. El agente debe responder solo si puede "
+        "conectarla con politica colombiana actual o explicar la limitacion."
+    )
+
+
 @tool
 def obtener_contexto_temporal(input: str = "") -> str:
     """
-    Retorna la fecha actual y el contexto temporal.
-    Úsala cuando necesites saber qué día es hoy o contextualizar las noticias.
+    Retorna fecha actual y marco temporal esperado del corpus.
     """
     ahora = datetime.now()
     return (
-        f"Fecha actual: {ahora.strftime('%A %d de %B de %Y')}\n"
-        f"Hora: {ahora.strftime('%H:%M')}\n"
-        f"El enfoque configurado busca noticias de los últimos 30 días."
+        f"Fecha actual: {ahora.strftime('%Y-%m-%d %H:%M')}\n"
+        f"Ventana objetivo del corpus: ultimos {DIAS_BUSQUEDA} dias desde la ultima descarga.\n"
+        f"Enfoque configurado: {ENFOQUE_AGENTE}."
     )
 
-# ── TOOL 4: Contar y resumir noticias disponibles ─────────────
-@tool  
+
+@tool
 def estadisticas_noticias(input: str = "") -> str:
     """
-    Muestra cuántas noticias hay disponibles en la base de datos
-    y de qué temas son. Úsala cuando el usuario pregunte qué información tienes.
+    Resume cobertura del corpus: total, fechas, categorias, temas y fuentes.
+    Usala cuando el usuario pregunte que informacion tiene el agente o si hay cobertura.
     """
     try:
-        with open("datos/noticias.json", "r", encoding="utf-8") as f:
-            noticias = json.load(f)
-        
-        total = len(noticias)
-        temas = {}
-        for n in noticias:
-            tema = n.get("tema", "General")
-            temas[tema] = temas.get(tema, 0) + 1
-        
-        resumen = f"📊 Base de datos de noticias:\n"
-        resumen += f"   Total de noticias: {total}\n"
-        resumen += f"   Distribución por tema:\n"
-        for tema, cantidad in temas.items():
-            resumen += f"   - {tema}: {cantidad} noticias\n"
-        
-        return resumen
-    except:
-        return "No se pudo obtener estadísticas de las noticias."
+        noticias = _cargar_noticias()
+        if not noticias:
+            return "No hay noticias cargadas en datos/noticias.json."
+
+        fechas = sorted(n.get("fecha", "") for n in noticias if n.get("fecha"))
+        categorias = Counter(n.get("categoria") or "Sin categoria" for n in noticias)
+        temas = Counter(n.get("tema") or "Sin tema" for n in noticias)
+        fuentes = Counter(n.get("fuente") or "Sin fuente" for n in noticias)
+        con_categoria = sum(1 for n in noticias if n.get("categoria"))
+
+        lineas = [
+            "Base documental del agente:",
+            f"- Total de noticias: {len(noticias)}",
+            f"- Rango de fechas: {fechas[0] if fechas else 'sin fecha'} a {fechas[-1] if fechas else 'sin fecha'}",
+            f"- Noticias con categoria explicita: {con_categoria}/{len(noticias)}",
+            "- Categorias principales:",
+        ]
+        for categoria, cantidad in categorias.most_common(8):
+            lineas.append(f"  * {categoria}: {cantidad}")
+
+        lineas.append("- Temas principales:")
+        for tema, cantidad in temas.most_common(8):
+            lineas.append(f"  * {tema}: {cantidad}")
+
+        lineas.append("- Fuentes principales:")
+        for fuente, cantidad in fuentes.most_common(8):
+            lineas.append(f"  * {fuente}: {cantidad}")
+
+        if CORPUS_METADATA.exists():
+            lineas.append(f"- Metadata de corpus disponible: {CORPUS_METADATA}")
+        else:
+            lineas.append("- Metadata de corpus no encontrada; conviene regenerar la ingesta.")
+
+        return "\n".join(lineas)
+    except Exception as error:
+        return f"No se pudo obtener estadisticas de las noticias: {error}"
+
+
+@tool
+def diagnosticar_cobertura(input: str = "") -> str:
+    """
+    Evalua si el corpus actual esta alineado con el enfoque del agente.
+    Usala para decidir si una respuesta debe advertir limitaciones o pedir regenerar datos.
+    """
+    try:
+        noticias = _cargar_noticias()
+        if not noticias:
+            return "Diagnostico: sin corpus cargado. Ejecuta obtener_noticias.py y crear_vectorstore.py."
+
+        puntajes = [_score_enfoque(n) for n in noticias]
+        alineadas = sum(1 for p in puntajes if p >= 3)
+        porcentaje = (alineadas / len(noticias)) * 100
+        fechas = sorted(n.get("fecha", "") for n in noticias if n.get("fecha"))
+        con_categoria = sum(1 for n in noticias if n.get("categoria"))
+
+        diagnostico = [
+            "Diagnostico de cobertura del corpus:",
+            f"- Enfoque esperado: {ENFOQUE_AGENTE}.",
+            f"- Noticias alineadas por palabras clave: {alineadas}/{len(noticias)} ({porcentaje:.1f}%).",
+            f"- Rango de fechas: {fechas[0] if fechas else 'sin fecha'} a {fechas[-1] if fechas else 'sin fecha'}.",
+            f"- Campo categoria presente: {con_categoria}/{len(noticias)}.",
+        ]
+
+        if porcentaje < 70 or con_categoria < len(noticias) * 0.8:
+            diagnostico.append(
+                "Conclusion: el corpus parece mezclado o generado con una version anterior. "
+                "Regenera con python3 obtener_noticias.py y python3 crear_vectorstore.py."
+            )
+        else:
+            diagnostico.append("Conclusion: el corpus esta razonablemente alineado con el enfoque.")
+
+        return "\n".join(diagnostico)
+    except Exception as error:
+        return f"No pude diagnosticar la cobertura: {error}"

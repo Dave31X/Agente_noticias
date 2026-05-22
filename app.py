@@ -9,6 +9,10 @@ import importlib.util
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, SystemMessage
+from config import NEWS_JSON
+from llm_provider import crear_llm, descripcion_llm
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURACIÓN GENERAL
@@ -21,8 +25,7 @@ st.set_page_config(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "datos"
-NEWS_JSON = DATA_DIR / "noticias.json"
+load_dotenv(BASE_DIR / ".env", override=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -659,15 +662,22 @@ def calcular_stats(noticias):
     total = len(noticias)
     fuentes = Counter(n.get("fuente", "Sin fuente") for n in noticias if n.get("fuente"))
     temas = Counter(n.get("tema", "Sin tema") for n in noticias if n.get("tema"))
+    categorias = Counter(n.get("categoria") or "Sin categoria" for n in noticias)
     fechas = sorted({n.get("fecha") for n in noticias if n.get("fecha")}, reverse=True)
+    con_categoria = sum(1 for n in noticias if n.get("categoria"))
+    cobertura_estado = "Alineado" if total and con_categoria >= total * 0.8 else "Revisar corpus"
 
     return {
         "total": total,
         "fuentes_total": len(fuentes),
         "temas_total": len(temas),
+        "categorias_total": len(categorias),
+        "con_categoria": con_categoria,
+        "cobertura_estado": cobertura_estado,
         "ultima_fecha": fechas[0] if fechas else "—",
         "top_fuentes": fuentes.most_common(5),
         "top_temas": temas.most_common(8),
+        "top_categorias": categorias.most_common(8),
     }
 
 
@@ -684,13 +694,22 @@ if "mensajes" not in st.session_state:
 if "agente_error" not in st.session_state:
     st.session_state.agente_error = None
 
-if "agente" not in st.session_state:
+if "permitir_web" not in st.session_state:
+    st.session_state.permitir_web = True
+
+if (
+    "agente" not in st.session_state
+    or st.session_state.get("agente_permitir_web") != st.session_state.permitir_web
+):
     try:
         crear_agente = importar_crear_agente()
-        st.session_state.agente = crear_agente()
+        st.session_state.agente = crear_agente(permitir_web=st.session_state.permitir_web)
+        st.session_state.agente_permitir_web = st.session_state.permitir_web
+        st.session_state.agente_error = None
     except Exception as error:
         st.session_state.agente = None
         st.session_state.agente_error = str(error)
+        st.session_state.agente_permitir_web = st.session_state.permitir_web
 
 
 # ─────────────────────────────────────────────────────────────
@@ -729,6 +748,39 @@ def render_message(rol, contenido):
         )
 
 
+def responder_directo(pregunta):
+    from tools import buscar_noticias, buscar_web_noticias
+
+    contexto_local = buscar_noticias.invoke(pregunta)
+    contexto_web = ""
+    if st.session_state.permitir_web:
+        contexto_web = buscar_web_noticias.invoke(pregunta)
+
+    llm = crear_llm(temperature=0.25)
+
+    sistema = (
+        "Eres NewsAgent, analista neutral de politica colombiana. "
+        "Responde siempre con la mejor informacion disponible. "
+        "Usa el corpus local como contexto y Tavily como complemento web cuando exista. "
+        "No empieces diciendo que no tienes informacion suficiente si hay fuentes. "
+        "Si hay incertidumbre, ponla al final como limitacion concreta. "
+        "Separa hechos de interpretaciones cuando ayude. Cita fuentes, fechas y URLs disponibles."
+    )
+    usuario = f"""
+Pregunta del usuario:
+{pregunta}
+
+Contexto recuperado del corpus local:
+{contexto_local}
+
+Contexto recuperado de Tavily/web:
+{contexto_web or 'Web desactivada para esta consulta.'}
+
+Redacta una respuesta util en espanol. Empieza con la respuesta directa, luego puntos clave y fuentes.
+"""
+    return llm.invoke([SystemMessage(content=sistema), HumanMessage(content=usuario)]).content
+
+
 def procesar_pregunta(pregunta):
     st.session_state.mensajes.append({"rol": "usuario", "contenido": pregunta})
 
@@ -740,14 +792,21 @@ def procesar_pregunta(pregunta):
         )
     else:
         try:
-            respuesta_agente = st.session_state.agente.invoke({"input": pregunta})
-            respuesta = respuesta_agente.get("output", "No encontré una respuesta disponible.")
+            respuesta = responder_directo(pregunta)
         except Exception as error:
-            respuesta = (
-                "Ocurrió un error al consultar el agente. Revisa que el vectorstore, las claves API "
-                "y las dependencias estén correctamente configuradas.\n\n"
-                f"Detalle técnico: {error}"
-            )
+            detalle = str(error)
+            if "429" in detalle or "rate_limit" in detalle.lower() or "tokens per day" in detalle.lower():
+                respuesta = (
+                    "El agente sí está funcionando, pero Groq bloqueó esta consulta por límite diario de tokens. "
+                    "Espera a que se libere la cuota indicada por Groq o baja aún más `GROQ_MAX_TOKENS` en `.env`.\n\n"
+                    f"Detalle técnico: {detalle}"
+                )
+            else:
+                respuesta = (
+                    "Ocurrió un error al consultar el agente. Revisa que el vectorstore, las claves API "
+                    "y las dependencias estén correctamente configuradas.\n\n"
+                    f"Detalle técnico: {detalle}"
+                )
 
     st.session_state.mensajes.append({"rol": "agente", "contenido": respuesta})
 
@@ -773,6 +832,7 @@ with st.sidebar:
 
     estado_sistema = "Activo" if st.session_state.agente is not None else "Pendiente"
     estado_color = "#86efac" if st.session_state.agente is not None else "#fcd34d"
+    modo_busqueda = "RAG + web" if st.session_state.permitir_web else "Solo RAG local"
 
     st.markdown(
         f"""
@@ -783,11 +843,18 @@ with st.sidebar:
                 {estado_sistema}
             </div>
             <div class="sidebar-note" style="margin-top:0.75rem;">
-                Motor RAG listo para explicar politica colombiana actual con neutralidad y contexto.
+                Motor {modo_busqueda} con {descripcion_llm()} para politica colombiana actual.
+                Estado del corpus: {stats['cobertura_estado']}.
             </div>
         </div>
         """,
         unsafe_allow_html=True
+    )
+
+    st.checkbox(
+        "Complementar siempre con web",
+        key="permitir_web",
+        help="Si está activo, el agente usa RAG local y Tavily en consultas políticas/electorales de actualidad.",
     )
 
     st.markdown(
@@ -803,8 +870,8 @@ with st.sidebar:
                 <span class="side-value">{stats['fuentes_total']}</span>
             </div>
             <div class="side-metric">
-                <span class="side-label">Temas en radar</span>
-                <span class="side-value">{stats['temas_total']}</span>
+                <span class="side-label">Categorias</span>
+                <span class="side-value">{stats['categorias_total']}</span>
             </div>
             <div class="side-metric">
                 <span class="side-label">Última pasada</span>
@@ -816,14 +883,14 @@ with st.sidebar:
     )
 
     temas_html = "".join(
-        f"<span class='topic-tag'>{html.escape(tema)} · {cantidad}</span>"
-        for tema, cantidad in stats["top_temas"]
+        f"<span class='topic-tag'>{html.escape(categoria)} · {cantidad}</span>"
+        for categoria, cantidad in stats["top_categorias"]
     ) or "<span class='topic-tag'>Sin datos</span>"
 
     st.markdown(
         f"""
         <div class="side-section">
-            <div class="side-title">Temas que hacen ruido</div>
+            <div class="side-title">Categorias del enfoque</div>
             <div class="tag-grid">{temas_html}</div>
         </div>
         """,
@@ -896,8 +963,10 @@ st.markdown(
             <div class="executive-ribbon">✨ Hechos separados de opiniones · contexto para todos</div>
             <div class="hero-actions">
                 <div class="hero-chip">RAG + Vector DB</div>
+                <div class="hero-chip">{'RAG local + Tavily activo' if st.session_state.permitir_web else 'Solo corpus local'}</div>
                 <div class="hero-chip">Colombia politica bajo la lupa</div>
                 <div class="hero-chip">Elecciones presidenciales 2026</div>
+                <div class="hero-chip">Corpus: {stats['cobertura_estado']}</div>
                 <div class="hero-chip">{stats['total']:,} noticias listas para analizar con metodo</div>
             </div>
         </div>
@@ -938,10 +1007,10 @@ with kpi3:
     st.markdown(
         f"""
         <div class="metric-card">
-            <div class="metric-label">Temas en radar</div>
-            <div class="metric-value">{stats['temas_total']}</div>
-            <div class="metric-caption">Categorías que permiten ordenar la conversación pública sin drama.</div>
-            <div class="metric-accent">Taxonomía</div>
+            <div class="metric-label">Categorias en radar</div>
+            <div class="metric-value">{stats['categorias_total']}</div>
+            <div class="metric-caption">Taxonomía electoral para ordenar candidatos, encuestas, instituciones y riesgos.</div>
+            <div class="metric-accent">{stats['con_categoria']:,} etiquetadas</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -1038,7 +1107,7 @@ st.markdown(
                 <div class="chat-title">Analista de bolsillo</div>
                 <div class="chat-subtitle">Pregunta sobre elecciones, candidatos, encuestas, partidos, gobierno y oposicion.</div>
             </div>
-            <div class="chat-badge">● Disponible</div>
+            <div class="chat-badge">● {'RAG + web' if st.session_state.permitir_web else 'Solo RAG'}</div>
         </div>
     """,
     unsafe_allow_html=True

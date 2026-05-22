@@ -1,5 +1,7 @@
-venv/ 
-datos/ 
-.env 
-__pycache__/ 
-*.pyc 
+venv/
+.venv/
+datos/
+.env
+__pycache__/
+*.pyc
+resultados/*.json

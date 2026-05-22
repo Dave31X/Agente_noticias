@@ -2,112 +2,112 @@
 import requests
 import json
 import os
+import sys
 import time
+import xml.etree.ElementTree as ET
+from html import unescape
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
+from urllib.parse import quote_plus
+from config import (
+    CATEGORIAS_TEMAS,
+    CORPUS_METADATA,
+    DATA_DIR,
+    DIAS_BUSQUEDA,
+    FUENTES_RSS,
+    MAX_ARTICULOS_RSS_POR_TEMA,
+    MIN_NOTICIAS_OBJETIVO,
+    NEWSAPI_DOMINIOS_EXCLUIDOS,
+    MAX_SOLICITUDES_POR_EJECUCION,
+    NEWSAPI_DOMINIOS_PRIORITARIOS,
+    NEWS_JSON,
+    NEWS_TXT,
+    PAGINAS_POR_TEMA,
+    PALABRAS_COLOMBIA,
+    PALABRAS_POLITICA_ELECTORAL,
+    TEMAS,
+)
 
 load_dotenv()
 API_KEY = os.getenv("NEWS_API_KEY")
+_RSS_CACHE = {}
 
-# ── ENFOQUE: Política actual de Colombia y presidenciales 2026 ─
-CATEGORIAS_TEMAS = {
-    "Elecciones presidenciales Colombia 2026": [
-        "elecciones presidenciales Colombia 2026",
-        "campaña presidencial Colombia 2026",
-        "precandidatos presidenciales Colombia 2026",
-        "candidatos presidenciales Colombia",
-        "presidenciales Colombia 2026",
-        "primera vuelta presidencial Colombia 2026",
-        "segunda vuelta presidencial Colombia 2026",
-        "elecciones 2026 Colombia presidente",
-    ],
-    "Candidatos y propuestas": [
-        "propuestas candidatos presidenciales Colombia",
-        "programa de gobierno candidatos Colombia 2026",
-        "debate candidatos presidenciales Colombia",
-        "aspirantes presidenciales Colombia",
-        "candidaturas Colombia 2026",
-        "hojas de vida candidatos presidenciales Colombia",
-        "alianzas candidatos presidenciales Colombia",
-    ],
-    "Encuestas y opinion publica": [
-        "encuesta presidencial Colombia 2026",
-        "intencion de voto Colombia presidenciales",
-        "favorabilidad candidatos Colombia",
-        "opinion publica Colombia elecciones",
-        "sondeo presidencial Colombia",
-        "tracking electoral Colombia",
-        "imagen candidatos presidenciales Colombia",
-    ],
-    "Partidos, coaliciones y Congreso": [
-        "partidos politicos Colombia elecciones 2026",
-        "coaliciones politicas Colombia 2026",
-        "Pacto Historico elecciones 2026 Colombia",
-        "Centro Democratico elecciones 2026 Colombia",
-        "Partido Liberal elecciones 2026 Colombia",
-        "Partido Conservador elecciones 2026 Colombia",
-        "Alianza Verde elecciones 2026 Colombia",
-        "Congreso Colombia elecciones presidenciales",
-        "oposicion Colombia elecciones 2026",
-    ],
-    "Instituciones y reglas electorales": [
-        "Registraduria elecciones Colombia 2026",
-        "Consejo Nacional Electoral Colombia elecciones",
-        "CNE Colombia candidatos presidenciales",
-        "financiacion campañas Colombia",
-        "calendario electoral Colombia 2026",
-        "inscripcion candidatos presidenciales Colombia",
-        "reforma politica Colombia elecciones",
-        "garantias electorales Colombia",
-    ],
-    "Gobierno y contexto politico": [
-        "Gobierno Petro elecciones 2026",
-        "Gustavo Petro politica Colombia actualidad",
-        "reformas gobierno Petro elecciones",
-        "crisis politica Colombia gobierno",
-        "gabinete Colombia Petro politica",
-        "relacion gobierno Congreso Colombia",
-        "oposicion gobierno Petro Colombia",
-        "debate politico Colombia actualidad",
-        "Corte Constitucional Colombia politica",
-        "Fiscalia Colombia politica",
-        "Procuraduria Colombia politica",
-    ],
-    "Seguridad y riesgos electorales": [
-        "seguridad electoral Colombia 2026",
-        "violencia politica Colombia elecciones",
-        "riesgo electoral Colombia",
-        "MOE Colombia elecciones 2026",
-        "orden publico elecciones Colombia",
-        "desinformacion elecciones Colombia",
-        "delitos electorales Colombia",
-        "compra de votos Colombia elecciones",
-    ],
-}
 
-TEMAS = [tema for temas in CATEGORIAS_TEMAS.values() for tema in temas]
+class NewsAPIRateLimitError(RuntimeError):
+    """Señal interna para guardar el corpus parcial y terminar sin bucles de espera."""
 
-DIAS_BUSQUEDA = 30
-PAGINAS_POR_TEMA = 2  # 2 paginas x 100 articulos = hasta 200 por tema
 
-def obtener_articulos_pagina(tema, pagina=1, cantidad=100):
+class NewsAPIUnavailableError(RuntimeError):
+    """NewsAPI no esta disponible para esta ejecucion; se debe usar fallback."""
+
+
+def construir_query(tema):
+    """Consulta simple: NewsAPI no siempre interpreta bien AND + comillas."""
+    if " AND " in tema or " OR " in tema:
+        return tema
+    if "colombia" in tema.lower():
+        return tema
+    return f"{tema} Colombia"
+
+
+def limpiar_query_rss(tema):
+    """Google News RSS funciona mejor con una busqueda menos booleana."""
+    reemplazos = {
+        " AND ": " ",
+        " OR ": " ",
+        "(": " ",
+        ")": " ",
+        '"': " ",
+    }
+    query = tema
+    for viejo, nuevo in reemplazos.items():
+        query = query.replace(viejo, nuevo)
+    query = " ".join(query.split())
+    if "colombia" not in query.lower():
+        query = f"{query} Colombia"
+    return query
+
+
+def fecha_rss_a_iso(fecha):
+    try:
+        return parsedate_to_datetime(fecha).date().isoformat()
+    except Exception:
+        return datetime.now().date().isoformat()
+
+
+def obtener_articulos_pagina(tema, categoria, pagina=1, cantidad=100):
     """Descarga una página de artículos de NewsAPI"""
     fecha_inicio = (datetime.now() - timedelta(days=DIAS_BUSQUEDA)).strftime("%Y-%m-%d")
     url = "https://newsapi.org/v2/everything"
     params = {
-        "q": tema,
+        "q": construir_query(tema),
         "language": "es",
         "from": fecha_inicio,
         "sortBy": "publishedAt",
         "pageSize": cantidad,
         "page": pagina,
         "searchIn": "title,description,content",
-        "apiKey": API_KEY
+        "apiKey": API_KEY,
     }
+    if NEWSAPI_DOMINIOS_PRIORITARIOS:
+        params["domains"] = ",".join(NEWSAPI_DOMINIOS_PRIORITARIOS)
+    if NEWSAPI_DOMINIOS_EXCLUIDOS:
+        params["excludeDomains"] = ",".join(NEWSAPI_DOMINIOS_EXCLUIDOS)
     try:
         r = requests.get(url, params=params, timeout=12)
+        if r.status_code in (401, 403):
+            raise NewsAPIUnavailableError(
+                f"NewsAPI rechazo la solicitud ({r.status_code}). Revisa clave, plan o restricciones."
+            )
+        if r.status_code == 429:
+            raise NewsAPIRateLimitError(
+                "NewsAPI alcanzo el limite de solicitudes de tu plan. "
+                "Se usara una fuente RSS de respaldo."
+            )
+        r.raise_for_status()
         datos = r.json()
-        if datos["status"] == "ok":
+        if datos.get("status") == "ok":
             return [
                 {
                     "titulo": a["title"],
@@ -115,8 +115,10 @@ def obtener_articulos_pagina(tema, pagina=1, cantidad=100):
                     "contenido_parcial": a.get("content", ""),
                     "fuente": a["source"]["name"],
                     "fecha": a["publishedAt"][:10],
+                    "categoria": categoria,
                     "tema": tema,
-                    "url": a["url"]
+                    "url": a["url"],
+                    "origen_ingesta": "newsapi",
                 }
                 for a in datos["articles"]
                 if a.get("title")
@@ -125,16 +127,114 @@ def obtener_articulos_pagina(tema, pagina=1, cantidad=100):
                 and len(a.get("description", "")) > 50
             ]
         elif datos.get("code") == "rateLimited":
-            print("   ⏳ Rate limit — esperando 60s...")
-            time.sleep(60)
+            raise NewsAPIRateLimitError(
+                "NewsAPI alcanzo el limite de solicitudes de tu plan. "
+                "Se usara una fuente RSS de respaldo."
+            )
         elif datos.get("code") == "maximumResultsReached":
             return []
+        else:
+            print(f"   ⚠️ NewsAPI: {datos.get('code', 'sin_codigo')} - {datos.get('message', 'sin mensaje')}")
+    except NewsAPIRateLimitError:
+        raise
+    except NewsAPIUnavailableError:
+        raise
+    except requests.exceptions.RequestException as e:
+        raise NewsAPIUnavailableError(
+            f"NewsAPI no respondio correctamente ({e.__class__.__name__}). Se usara RSS de respaldo."
+        ) from e
     except Exception as e:
-        print(f"   ❌ Error conexión: {e}")
+        print(f"   ❌ Error procesando NewsAPI: {e.__class__.__name__}")
     return []
+
+
+def limpiar_html_basico(texto):
+    """Limpieza liviana para descripciones RSS sin agregar dependencias."""
+    texto = unescape(texto or "")
+    partes = []
+    dentro_etiqueta = False
+    for caracter in texto:
+        if caracter == "<":
+            dentro_etiqueta = True
+            partes.append(" ")
+        elif caracter == ">":
+            dentro_etiqueta = False
+            partes.append(" ")
+        elif not dentro_etiqueta:
+            partes.append(caracter)
+    return " ".join("".join(partes).split())
+
+
+def obtener_articulos_rss(tema, categoria):
+    """Fallback sin clave: consulta feeds RSS y normaliza al formato del corpus."""
+    articulos_busqueda = []
+    articulos_feed = []
+    query = limpiar_query_rss(tema)
+
+    for fuente_rss in FUENTES_RSS:
+        articulos_fuente = []
+        plantilla_url = fuente_rss["url"]
+        url = plantilla_url.format(query=quote_plus(query)) if "{query}" in plantilla_url else plantilla_url
+        try:
+            if url not in _RSS_CACHE:
+                r = requests.get(
+                    url,
+                    timeout=12,
+                    headers={"User-Agent": "NewsAgent/1.0 (+https://local)"},
+                )
+                r.raise_for_status()
+                _RSS_CACHE[url] = r.content
+            raiz = ET.fromstring(_RSS_CACHE[url])
+        except Exception as e:
+            print(f"   ⚠️ RSS {fuente_rss.get('nombre', 'sin_nombre')}: {e}")
+            continue
+
+        for item in raiz.findall(".//item"):
+            titulo = (item.findtext("title") or "").strip()
+            enlace = (item.findtext("link") or "").strip()
+            descripcion = limpiar_html_basico(item.findtext("description") or "")
+            fecha = fecha_rss_a_iso(item.findtext("pubDate") or "")
+            fuente = item.findtext("source") or fuente_rss.get("nombre", "RSS")
+
+            if not titulo or not enlace:
+                continue
+
+            articulos_fuente.append(
+                {
+                    "titulo": titulo,
+                    "descripcion": descripcion,
+                    "contenido_parcial": descripcion,
+                    "fuente": fuente,
+                    "fecha": fecha,
+                    "categoria": categoria,
+                    "tema": tema,
+                    "url": enlace,
+                    "origen_ingesta": "rss",
+                }
+            )
+
+        if fuente_rss.get("tipo") == "busqueda" or "{query}" in plantilla_url:
+            articulos_busqueda.extend(articulos_fuente)
+        else:
+            articulos_feed.append(articulos_fuente)
+
+    mezclados = list(articulos_busqueda)
+    max_items = max((len(items) for items in articulos_feed), default=0)
+    for indice in range(max_items):
+        for items in articulos_feed:
+            if indice < len(items):
+                mezclados.append(items[indice])
+            if len(mezclados) >= MAX_ARTICULOS_RSS_POR_TEMA:
+                return mezclados
+
+    return mezclados
+
 
 def obtener_contenido_completo(noticia):
     """Descarga el artículo completo. Si falla, usa lo que tiene NewsAPI."""
+    if noticia.get("origen_ingesta") == "rss":
+        return construir_contenido_fallback(noticia)
+
     try:
         from newspaper import Article
         art = Article(noticia["url"], language="es")
@@ -142,58 +242,57 @@ def obtener_contenido_completo(noticia):
         art.parse()
         if art.text and len(art.text) > 150:
             return art.text[:8000]  # máximo 8000 chars por artículo
-    except:
+    except Exception:
         pass
 
-    # Fallback: descripción + contenido parcial limpio
-    contenido = noticia.get("descripcion", "")
-    parcial = noticia.get("contenido_parcial", "")
-    if parcial:
-        # Eliminar el truncamiento "[+XXXX chars]"
-        parcial_limpio = parcial.split("[+")[0].strip()
-        if parcial_limpio:
-            contenido += " " + parcial_limpio
-    return contenido.strip()
+    return construir_contenido_fallback(noticia)
 
-def es_relevante(noticia):
-    """
-    Filtra noticias que realmente sean sobre politica colombiana,
-    elecciones presidenciales y contexto electoral.
-    """
-    palabras_clave = [
-        # Elecciones presidenciales
-        "elección", "elecciones", "electoral", "presidencial",
-        "presidenciales", "presidente", "candidato", "candidata",
-        "candidatos", "precandidato", "precandidata", "campaña",
-        "voto", "votación", "segunda vuelta", "primera vuelta",
-        "encuesta", "sondeo", "intención de voto", "favorabilidad",
-        # Partidos, coaliciones e instituciones
-        "partido", "coalición", "alianza", "oposición", "congreso",
-        "senado", "cámara", "registraduría", "registraduria",
-        "consejo nacional electoral", "cne", "moe", "financiación",
-        "financiacion", "garantías electorales", "garantias electorales",
-        # Contexto politico nacional
-        "gobierno", "petro", "ministro", "ministra", "reforma",
-        "política", "politica", "debate", "propuesta", "programa",
-        "corte constitucional", "fiscalía", "fiscalia", "procuraduría",
-        "procuraduria", "corrupción", "corrupcion", "investigación",
-        "investigacion", "desinformación", "desinformacion",
-        # Ubicacion
-        "colombia", "colombiano", "colombiana", "bogotá", "bogota",
+
+def construir_contenido_fallback(noticia):
+    """Texto suficiente para indexar fuentes que solo entregan metadata/resumen."""
+    parcial = (noticia.get("contenido_parcial", "") or "").split("[+")[0].strip()
+    partes = [
+        noticia.get("titulo", ""),
+        noticia.get("descripcion", ""),
+        parcial,
+        f"Categoria: {noticia.get('categoria', '')}",
+        f"Tema: {noticia.get('tema', '')}",
+        f"Fuente: {noticia.get('fuente', '')}",
     ]
+    return " ".join(" ".join(p for p in partes if p).split()).strip()
+
+
+def puntuar_relevancia(noticia):
+    """
+    Puntua afinidad con el enfoque. Exige senal de Colombia y senal politica/electoral.
+    Evita que una noticia economica regional entre solo por mencionar Colombia.
+    """
     texto = (
         (noticia.get("titulo") or "") + " " +
         (noticia.get("descripcion") or "") + " " +
         (noticia.get("contenido_parcial") or "")
     ).lower()
 
-    return any(p in texto for p in palabras_clave)
+    senales_colombia = sum(1 for p in PALABRAS_COLOMBIA if p in texto)
+    senales_politica = sum(1 for p in PALABRAS_POLITICA_ELECTORAL if p in texto)
+    if senales_colombia == 0 or senales_politica == 0:
+        return 0
+    return (senales_colombia * 2) + senales_politica
+
+
+def es_relevante(noticia):
+    return puntuar_relevancia(noticia) >= 4
+
 
 def descargar_todas():
     todas = []
     urls_vistas = set()
     solicitudes = 0
-    MAX_SOLICITUDES_POR_HORA = 90  # NewsAPI límite gratuito
+    usar_newsapi = bool(API_KEY)
+    if usar_newsapi:
+        print("ℹ️ Usaré NewsAPI como fuente principal; RSS queda como respaldo.")
+    else:
+        print("⚠️ Falta NEWS_API_KEY en .env. Usaré RSS como fuente de respaldo.")
 
     for categoria, temas in CATEGORIAS_TEMAS.items():
         print(f"\n{'='*55}")
@@ -203,15 +302,29 @@ def descargar_todas():
         for i, tema in enumerate(temas):
             print(f"\n  [{i+1}/{len(temas)}] 📡 {tema}")
 
-            for pagina in range(1, PAGINAS_POR_TEMA + 1):
-                # Control de rate limit
-                if solicitudes >= MAX_SOLICITUDES_POR_HORA:
-                    print(f"\n  ⏳ Límite de solicitudes alcanzado. Pausa 65s...")
-                    time.sleep(65)
-                    solicitudes = 0
+            paginas = range(1, PAGINAS_POR_TEMA + 1) if usar_newsapi else range(1, 2)
+            for pagina in paginas:
+                if solicitudes >= MAX_SOLICITUDES_POR_EJECUCION:
+                    print(
+                        f"\n  ⏹️ Límite local de {MAX_SOLICITUDES_POR_EJECUCION} "
+                        "solicitudes alcanzado para cuidar la cuota."
+                    )
+                    return todas
 
-                articulos = obtener_articulos_pagina(tema, pagina=pagina, cantidad=100)
-                solicitudes += 1
+                try:
+                    if usar_newsapi:
+                        articulos = obtener_articulos_pagina(tema, categoria, pagina=pagina, cantidad=100)
+                        solicitudes += 1
+                    else:
+                        articulos = obtener_articulos_rss(tema, categoria)
+                except NewsAPIRateLimitError as error:
+                    print(f"\n  ⏳ {error}")
+                    usar_newsapi = False
+                    articulos = obtener_articulos_rss(tema, categoria)
+                except NewsAPIUnavailableError as error:
+                    print(f"\n  ⚠️ {error}")
+                    usar_newsapi = False
+                    articulos = obtener_articulos_rss(tema, categoria)
 
                 if not articulos:
                     break  # no hay más páginas
@@ -228,24 +341,28 @@ def descargar_todas():
                     urls_vistas.add(art["url"])
                     contenido = obtener_contenido_completo(art)
                     art["contenido"] = contenido
-                    art["categoria"] = categoria
+                    art["relevancia_enfoque"] = puntuar_relevancia(art)
                     todas.append(art)
                     nuevos += 1
 
                 print(f"     Pág {pagina}: {nuevos} nuevas (+{filtrados} filtradas) | Total: {len(todas)}")
+                if len(todas) >= MIN_NOTICIAS_OBJETIVO:
+                    print(f"\n  ✅ Objetivo de {MIN_NOTICIAS_OBJETIVO} noticias alcanzado.")
+                    return todas
                 time.sleep(0.4)
 
     return todas
 
+
 def guardar(noticias):
-    os.makedirs("datos", exist_ok=True)
+    DATA_DIR.mkdir(exist_ok=True)
 
     # JSON completo
-    with open("datos/noticias.json", "w", encoding="utf-8") as f:
+    with open(NEWS_JSON, "w", encoding="utf-8") as f:
         json.dump(noticias, f, ensure_ascii=False, indent=2)
 
     # TXT para RAG — formato optimizado
-    with open("datos/noticias.txt", "w", encoding="utf-8") as f:
+    with open(NEWS_TXT, "w", encoding="utf-8") as f:
         for i, n in enumerate(noticias):
             f.write(f"=== NOTICIA {i+1} ===\n")
             f.write(f"TITULO: {n['titulo']}\n")
@@ -255,7 +372,18 @@ def guardar(noticias):
             f.write(f"TEMA: {n['tema']}\n")
             f.write(f"DESCRIPCION: {n.get('descripcion', '')}\n")
             f.write(f"CONTENIDO: {n.get('contenido', '')}\n")
+            f.write(f"URL: {n.get('url', '')}\n")
             f.write("\n")
+
+    metadata = {
+        "generado_en": datetime.now().isoformat(timespec="seconds"),
+        "ventana_dias": DIAS_BUSQUEDA,
+        "total_noticias": len(noticias),
+        "categorias": {},
+        "fuentes": {},
+        "fecha_min": min((n.get("fecha", "") for n in noticias), default=""),
+        "fecha_max": max((n.get("fecha", "") for n in noticias), default=""),
+    }
 
     # Resumen detallado
     print(f"\n{'='*55}")
@@ -270,6 +398,11 @@ def guardar(noticias):
         f = n.get("fuente", "?")
         fuentes[f] = fuentes.get(f, 0) + 1
 
+    metadata["categorias"] = dict(sorted(cats.items(), key=lambda x: -x[1]))
+    metadata["fuentes"] = dict(sorted(fuentes.items(), key=lambda x: -x[1])[:20])
+    with open(CORPUS_METADATA, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
     print("\n📊 Por categoría:")
     for c, cnt in sorted(cats.items(), key=lambda x: -x[1]):
         print(f"   {c}: {cnt}")
@@ -278,8 +411,9 @@ def guardar(noticias):
     for f, cnt in sorted(fuentes.items(), key=lambda x: -x[1])[:10]:
         print(f"   {f}: {cnt}")
 
-    tam = os.path.getsize("datos/noticias.txt") / 1024 / 1024
+    tam = os.path.getsize(NEWS_TXT) / 1024 / 1024
     print(f"\n💾 Tamaño del corpus: {tam:.1f} MB")
+
 
 if __name__ == "__main__":
     print("🚀 Descarga focalizada: Política Colombia · Presidenciales 2026")
@@ -288,6 +422,12 @@ if __name__ == "__main__":
     print(f"📄 Páginas por tema: {PAGINAS_POR_TEMA} (hasta {PAGINAS_POR_TEMA * 100} art/tema)\n")
     inicio = time.time()
     noticias = descargar_todas()
+    if not noticias:
+        print("\n⚠️ No se descargaron noticias.")
+        print("   Posibles causas: cuota agotada de NewsAPI, clave inválida o filtros sin resultados.")
+        print("   No se sobrescribirá el corpus con una base vacía.")
+        sys.exit(1)
+
     guardar(noticias)
     mins = (time.time() - inicio) / 60
     print(f"\n⏱️  Tiempo total: {mins:.1f} minutos")
