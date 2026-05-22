@@ -29,6 +29,8 @@ Reglas de respuesta:
 - Si el usuario pregunta que informacion tienes, usa estadisticas_noticias y diagnosticar_cobertura.
 - Si una afirmacion viene de una noticia o medio, presentala como reporte o version de esa fuente.
 - Incluye fuente y fecha cuando el retrieval las entregue.
+- No incluyas links, URLs ni markdown de enlaces a menos que el usuario lo pida explicitamente.
+- En fuentes usa solo este formato: medio, titulo de la noticia, fecha.
 - No conviertas opiniones de medios, politicos o encuestas en hechos definitivos.
 - Cuando hables de encuestas, menciona que son fotografias de un momento y pueden cambiar.
 - Responde siempre con la mejor informacion disponible. Si el corpus local es debil, usa Tavily y responde con esa evidencia.
@@ -60,12 +62,13 @@ Thought:{agent_scratchpad}
 
 
 def crear_agente(max_tokens: int | None = None, permitir_web: bool = True):
-    # Permite controlar `max_tokens` por variable de entorno `GROQ_MAX_TOKENS`
     if max_tokens is None:
         try:
-            max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "384"))
+            provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+            env_name = "GEMINI_MAX_TOKENS" if provider == "gemini" else "GROQ_MAX_TOKENS"
+            max_tokens = int(os.getenv(env_name, "1200"))
         except Exception:
-            max_tokens = 384
+            max_tokens = 1200
 
     llm = crear_llm(temperature=0.3, max_tokens=max_tokens)
 
@@ -88,7 +91,7 @@ def crear_agente(max_tokens: int | None = None, permitir_web: bool = True):
             "elecciones, candidatos, encuestas, instituciones, partidos, gobierno, oposicion o riesgos.\n"
             "- Distingue claramente que viene del corpus local y que viene de Tavily.\n"
             "- Si el corpus local y Tavily difieren, explica la diferencia sin bloquear la respuesta.\n"
-            "- Si usas web, cita titulo, medio/fuente, fecha y URL cuando esten disponibles."
+            "- Si usas web, cita titulo, medio/fuente y fecha; no incluyas URL salvo que el usuario la pida."
         )
 
     prompt = PromptTemplate.from_template(

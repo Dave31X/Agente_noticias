@@ -7,6 +7,7 @@ from collections import Counter
 from datetime import datetime
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
 from langchain.tools import tool
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -20,6 +21,8 @@ from config import (
     PALABRAS_POLITICA_ELECTORAL,
     VECTORSTORE_DIR,
 )
+
+load_dotenv(override=True)
 
 _embeddings = None
 _vectorstore = None
@@ -53,6 +56,16 @@ PALABRAS_ENFOQUE_WEB = [
     "registraduria",
     "registraduría",
     "cne",
+]
+PALABRAS_CONSULTA_HISTORICA_WEB = [
+    "vicepresidencial",
+    "vicepresidente",
+    "vicepresidenta",
+    "formula",
+    "fórmula",
+    "lista completa",
+    "inscritos",
+    "cierre de inscripciones",
 ]
 
 
@@ -123,9 +136,25 @@ def buscar_noticias(consulta: str) -> str:
     """
     try:
         vectorstore = _get_vectorstore()
-        resultados = vectorstore.similarity_search_with_score(consulta, k=4)
+        resultados_crudos = vectorstore.similarity_search_with_score(consulta, k=10)
     except Exception as error:
         return f"No pude consultar la base vectorial: {error}"
+
+    resultados = []
+    vistos = set()
+    for doc, score in resultados_crudos:
+        meta = doc.metadata or {}
+        clave = (
+            meta.get("url")
+            or meta.get("titulo")
+            or _recortar(doc.page_content, 120)
+        )
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        resultados.append((doc, score))
+        if len(resultados) >= 6:
+            break
 
     if not resultados:
         return "No encontre noticias relevantes sobre ese tema en la base local."
@@ -141,7 +170,6 @@ def buscar_noticias(consulta: str) -> str:
                 f"Fecha: {meta.get('fecha', 'Sin fecha')}",
                 f"Categoria: {meta.get('categoria', 'Sin categoria')}",
                 f"Tema: {meta.get('tema', 'Sin tema')}",
-                f"URL: {meta.get('url', 'Sin URL')}",
                 f"Distancia semantica: {score:.4f}",
                 f"Fragmento: {_recortar(doc.page_content)}",
             ]
@@ -155,7 +183,7 @@ def buscar_web_noticias(consulta: str) -> str:
     Investiga noticias recientes en la web usando Tavily Search.
     Usala cuando el corpus local no tenga evidencia suficiente, este desactualizado
     o el usuario pida informacion muy reciente. No reemplaza el retrieval local:
-    complementa la respuesta y debe citar titulo, fuente, fecha y URL.
+    complementa la respuesta y debe citar titulo, fuente y fecha.
     """
     api_key = os.getenv("TAVILY_API_KEY")
     if not api_key:
@@ -170,6 +198,7 @@ def buscar_web_noticias(consulta: str) -> str:
         query = f"{query} Colombia"
     if not any(palabra in query.lower() for palabra in PALABRAS_ENFOQUE_WEB):
         query = f"{query} politica actualidad"
+    ventana_dias = 120 if any(palabra in query.lower() for palabra in PALABRAS_CONSULTA_HISTORICA_WEB) else DIAS_BUSQUEDA
 
     try:
         from tavily import TavilyClient
@@ -180,13 +209,13 @@ def buscar_web_noticias(consulta: str) -> str:
             "search_depth": "basic",
             "topic": "general",
             "country": "colombia",
-            "days": DIAS_BUSQUEDA,
+            "days": ventana_dias,
             "max_results": 5,
             "include_answer": False,
-            "include_raw_content": False,
+            "include_raw_content": ventana_dias != DIAS_BUSQUEDA,
             "include_usage": True,
         }
-        if any(palabra in query.lower() for palabra in PALABRAS_ENFOQUE_WEB):
+        if ventana_dias == DIAS_BUSQUEDA and any(palabra in query.lower() for palabra in PALABRAS_ENFOQUE_WEB):
             parametros["include_domains"] = DOMINIOS_WEB_PRIORITARIOS
 
         respuesta = cliente.search(
@@ -200,6 +229,7 @@ def buscar_web_noticias(consulta: str) -> str:
         titulo = (item.get("title") or "").strip()
         enlace = (item.get("url") or "").strip()
         contenido = (item.get("content") or "").strip()
+        raw_content = (item.get("raw_content") or item.get("rawContent") or "").strip()
         fecha = item.get("published_date") or item.get("publishedDate") or ""
         score = item.get("score")
 
@@ -212,7 +242,7 @@ def buscar_web_noticias(consulta: str) -> str:
                 "fuente": _dominio(enlace),
                 "fecha": fecha,
                 "url": enlace,
-                "contenido": contenido,
+                "contenido": raw_content or contenido,
                 "score": score,
             }
         )
@@ -224,7 +254,7 @@ def buscar_web_noticias(consulta: str) -> str:
         f"Consulta web: {query}",
         "Proveedor de busqueda web: Tavily Search",
             f"Resultados web recuperados: {len(resultados[:5])}",
-        f"Ventana web solicitada: ultimos {DIAS_BUSQUEDA} dias",
+        f"Ventana web solicitada: ultimos {ventana_dias} dias",
     ]
     if respuesta.get("usage"):
         lineas.append(f"Uso Tavily reportado: {respuesta.get('usage')}")
@@ -237,7 +267,6 @@ def buscar_web_noticias(consulta: str) -> str:
                 f"Titulo: {resultado['titulo']}",
                 f"Fuente: {resultado['fuente']}",
                 f"Fecha: {resultado['fecha'] or 'Sin fecha'}",
-                f"URL: {resultado['url']}",
                 f"Score Tavily: {score_texto}",
                 f"Resumen: {_recortar(resultado['contenido'], 320)}",
             ]

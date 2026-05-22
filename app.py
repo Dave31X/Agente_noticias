@@ -10,9 +10,9 @@ from pathlib import Path
 from datetime import datetime
 from collections import Counter
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
 from config import NEWS_JSON
-from llm_provider import crear_llm, descripcion_llm
+from chat_core import responder_directo as responder_chat
+from llm_provider import descripcion_llm
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURACIÓN GENERAL
@@ -691,6 +691,9 @@ stats = calcular_stats(noticias)
 if "mensajes" not in st.session_state:
     st.session_state.mensajes = []
 
+if "ultima_pregunta_procesada" not in st.session_state:
+    st.session_state.ultima_pregunta_procesada = None
+
 if "agente_error" not in st.session_state:
     st.session_state.agente_error = None
 
@@ -749,40 +752,19 @@ def render_message(rol, contenido):
 
 
 def responder_directo(pregunta):
-    from tools import buscar_noticias, buscar_web_noticias
-
-    contexto_local = buscar_noticias.invoke(pregunta)
-    contexto_web = ""
-    if st.session_state.permitir_web:
-        contexto_web = buscar_web_noticias.invoke(pregunta)
-
-    llm = crear_llm(temperature=0.25)
-
-    sistema = (
-        "Eres NewsAgent, analista neutral de politica colombiana. "
-        "Responde siempre con la mejor informacion disponible. "
-        "Usa el corpus local como contexto y Tavily como complemento web cuando exista. "
-        "No empieces diciendo que no tienes informacion suficiente si hay fuentes. "
-        "Si hay incertidumbre, ponla al final como limitacion concreta. "
-        "Separa hechos de interpretaciones cuando ayude. Cita fuentes, fechas y URLs disponibles."
-    )
-    usuario = f"""
-Pregunta del usuario:
-{pregunta}
-
-Contexto recuperado del corpus local:
-{contexto_local}
-
-Contexto recuperado de Tavily/web:
-{contexto_web or 'Web desactivada para esta consulta.'}
-
-Redacta una respuesta util en espanol. Empieza con la respuesta directa, luego puntos clave y fuentes.
-"""
-    return llm.invoke([SystemMessage(content=sistema), HumanMessage(content=usuario)]).content
+    return responder_chat(pregunta, permitir_web=st.session_state.permitir_web)
 
 
 def procesar_pregunta(pregunta):
-    st.session_state.mensajes.append({"rol": "usuario", "contenido": pregunta})
+    pregunta_limpia = " ".join((pregunta or "").split())
+    if not pregunta_limpia:
+        return
+
+    if st.session_state.ultima_pregunta_procesada == pregunta_limpia:
+        return
+
+    st.session_state.ultima_pregunta_procesada = pregunta_limpia
+    st.session_state.mensajes.append({"rol": "usuario", "contenido": pregunta_limpia})
 
     if st.session_state.agente is None:
         respuesta = (
@@ -792,7 +774,7 @@ def procesar_pregunta(pregunta):
         )
     else:
         try:
-            respuesta = responder_directo(pregunta)
+            respuesta = responder_directo(pregunta_limpia)
         except Exception as error:
             detalle = str(error)
             if "429" in detalle or "rate_limit" in detalle.lower() or "tokens per day" in detalle.lower():

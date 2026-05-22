@@ -20,7 +20,7 @@ def crear_llm(temperature: float = 0.25, max_tokens: int | None = None):
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        modelo = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        modelo = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         salida_maxima = max_tokens if max_tokens is not None else _int_env("GEMINI_MAX_TOKENS", 768)
         api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         return ChatGoogleGenerativeAI(
@@ -50,7 +50,7 @@ def crear_llm(temperature: float = 0.25, max_tokens: int | None = None):
 def descripcion_llm() -> str:
     provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
     if provider == "gemini":
-        return f"Gemini · {os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')}"
+        return f"Gemini · {os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')}"
     if provider == "groq":
         return f"Groq · {os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')}"
     return provider
